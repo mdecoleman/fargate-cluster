@@ -4,37 +4,30 @@ Parameters:
   ServiceName:
     Description: Name of the service to deploy
     Type: String
-    Default: operations-ui
   ClusterStackName:
     Description: Stack name of the cluster
     Type: String
-    Default: operations
   Certificate:
     Type: String
     Description: Service listener Certificate
-    Default: arn:aws:acm:eu-west-1:033374200449:certificate/9f3b5013-0f45-4943-bd71-61cb80905b41
   HostedZoneName:
     Type: String
     Description: Hosted Zone Name
-    Default: tgvg.io.
   FQDN:
     Type: String
     Description: FQDN
-    Default: operations.tgvg.io.
   ContainerImage:
     Type: String
     Description: Docker registry image url
-    Default: 033374200449.dkr.ecr.eu-west-1.amazonaws.com/ops-portal
   ContainerPort:
-    Type: Number
+    Type: String
     Description: The container port
-    Default: 80
   ContainerMemory:
-    Type: Number
+    Type: String
     Description: The memory allocation for the container
     Default: 512
   ContainerCpu:
-    Type: Number
+    Type: String
     Description: The cpu allocation for the container
     Default: 256
 Resources:
