@@ -1,0 +1,152 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: This stack deployes a docker image into a fargate service running in ECS
+Parameters:
+  ServiceName:
+    Description: Name of the service to deploy
+    Type: String
+    Default: operations-ui
+  ClusterStackName:
+    Description: Stack name of the cluster
+    Type: String
+    Default: operations
+  Certificate:
+    Type: String
+    Description: Service listener certificate
+    Default: >-
+      arn:aws:acm:eu-west-1:033374200449:certificate/9f3b5013-0f45-4943-bd71-61cb80905b41
+Resources:
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId:
+        Fn::ImportValue: !Sub "${ClusterStackName}-VPC"
+      GroupDescription: Access to the load balancer
+      SecurityGroupIngress:
+        - CidrIp: 0.0.0.0/0
+          IpProtocol: -1
+  
+  ServiceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId:
+        Fn::ImportValue: !Sub "${ClusterStackName}-VPC"
+      GroupDescription: Access to the load balancer
+      SecurityGroupIngress:
+        - FromPort: 80
+          ToPort: 80
+          IpProtocol: tcp
+          SourceSecurityGroupId: !Ref SecurityGroup
+
+  ElasticLoadBalancerV2:
+    Type: "AWS::ElasticLoadBalancingV2::LoadBalancer"
+    Properties:
+      IpAddressType: ipv4
+      Name: !Ref ServiceName
+      Scheme: internet-facing
+      SecurityGroups:
+        - !Ref SecurityGroup
+      Subnets: !Split
+        - ","
+        - { "Fn::ImportValue": !Sub "${ClusterStackName}-PublicSubnets" }
+  HttpsListener:
+    Type: "AWS::ElasticLoadBalancingV2::Listener"
+    Properties:
+      Certificates:
+        - { "CertificateArn": !Ref Certificate }
+      LoadBalancerArn: !Ref ElasticLoadBalancerV2
+      Port: 443
+      Protocol: HTTPS
+      DefaultActions:
+        - TargetGroupArn: !Ref TargetGroup
+          Type: forward
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      HealthCheckIntervalSeconds: 30
+      HealthCheckPath: /
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      TargetType: ip
+      Name: !Ref "ServiceName"
+      Port: 80
+      Protocol: HTTP
+      UnhealthyThresholdCount: 2
+      VpcId:
+        Fn::ImportValue: !Sub "${ClusterStackName}-VPC"
+
+  ECSTaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: [ecs-tasks.amazonaws.com]
+            Action: ["sts:AssumeRole"]
+      Path: /
+      Policies:
+        - PolicyName: AmazonECSTaskExecutionRolePolicy
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action:
+                  # Allow the ECS Tasks to download images from ECR
+                  - "ecr:GetAuthorizationToken"
+                  - "ecr:BatchCheckLayerAvailability"
+                  - "ecr:GetDownloadUrlForLayer"
+                  - "ecr:BatchGetImage"
+
+                  # Allow the ECS tasks to upload logs to CloudWatch
+                  - "logs:CreateLogStream"
+                  - "logs:PutLogEvents"
+                Resource: "*"
+
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Ref "ServiceName"
+      Cpu: 256
+      Memory: 512
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      ExecutionRoleArn: !Ref ECSTaskExecutionRole
+      ContainerDefinitions:
+        - Name: !Ref "ServiceName"
+          Cpu: 256
+          Memory: 512
+          Image: 033374200449.dkr.ecr.eu-west-1.amazonaws.com/ops-portal
+          PortMappings:
+            - ContainerPort: 80
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group:
+                Fn::ImportValue: !Sub "${ClusterStackName}-LogGroup"
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: ui
+
+  Service:
+    Type: AWS::ECS::Service
+    Properties:
+      ServiceName: !Ref "ServiceName"
+      Cluster:
+        Fn::ImportValue: !Sub "${ClusterStackName}-Cluster"
+      LaunchType: FARGATE
+      DeploymentConfiguration:
+        MaximumPercent: 200
+        MinimumHealthyPercent: 75
+      DesiredCount: 3
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          SecurityGroups:
+            - !Ref ServiceSecurityGroup
+          Subnets: !Split
+            - ","
+            - Fn::ImportValue: !Sub "${ClusterStackName}-PrivateSubnets"
+      TaskDefinition: !Ref "TaskDefinition"
+      LoadBalancers:
+        - ContainerName: !Ref "ServiceName"
+          ContainerPort: 80
+          TargetGroupArn: !Ref "TargetGroup"

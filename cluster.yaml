@@ -297,13 +297,28 @@ Resources:
     Properties:
       ClusterName: !Ref Name
 
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /ecs/operations
+      RetentionInDays: 7
+
 Outputs:
-  Vpc:
+  VPC:
     Description: VPC
     Value: !Ref VPC
+    Export:
+      Name: !Sub "${AWS::StackName}-VPC"
+  LogGroup:
+    Description: Log Group
+    Value: !Ref LogGroup
+    Export:
+      Name: !Sub "${AWS::StackName}-LogGroup"
   Cluster:
     Description: ECS Cluster
     Value: !Ref ECSCluster
+    Export:
+      Name: !Sub "${AWS::StackName}-Cluster"
   PrivateSubnets:
     Description: List of private subnets in the VPC
     Value: !Join
@@ -311,6 +326,8 @@ Outputs:
       - - !Ref PrivateSubnetOne
         - !Ref PrivateSubnetTwo
         - !Ref PrivateSubnetThree
+    Export:
+      Name: !Sub "${AWS::StackName}-PrivateSubnets"
   PublicSubnets:
     Description: List of public subnets in the VPC
     Value: !Join
@@ -318,3 +335,5 @@ Outputs:
       - - !Ref PublicSubnetOne
         - !Ref PublicSubnetTwo
         - !Ref PublicSubnetThree
+    Export:
+      Name: !Sub "${AWS::StackName}-PublicSubnets"
