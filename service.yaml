@@ -11,9 +11,32 @@ Parameters:
     Default: operations
   Certificate:
     Type: String
-    Description: Service listener certificate
-    Default: >-
-      arn:aws:acm:eu-west-1:033374200449:certificate/9f3b5013-0f45-4943-bd71-61cb80905b41
+    Description: Service listener Certificate
+    Default: arn:aws:acm:eu-west-1:033374200449:certificate/9f3b5013-0f45-4943-bd71-61cb80905b41
+  HostedZoneName:
+    Type: String
+    Description: Hosted Zone Name
+    Default: tgvg.io.
+  FQDN:
+    Type: String
+    Description: FQDN
+    Default: operations.tgvg.io.
+  ContainerImage:
+    Type: String
+    Description: Docker registry image url
+    Default: 033374200449.dkr.ecr.eu-west-1.amazonaws.com/ops-portal
+  ContainerPort:
+    Type: Number
+    Description: The container port
+    Default: 80
+  ContainerMemory:
+    Type: Number
+    Description: The memory allocation for the container
+    Default: 512
+  ContainerCpu:
+    Type: Number
+    Description: The cpu allocation for the container
+    Default: 256
 Resources:
   SecurityGroup:
     Type: AWS::EC2::SecurityGroup
@@ -24,19 +47,6 @@ Resources:
       SecurityGroupIngress:
         - CidrIp: 0.0.0.0/0
           IpProtocol: -1
-  
-  ServiceSecurityGroup:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      VpcId:
-        Fn::ImportValue: !Sub "${ClusterStackName}-VPC"
-      GroupDescription: Access to the load balancer
-      SecurityGroupIngress:
-        - FromPort: 80
-          ToPort: 80
-          IpProtocol: tcp
-          SourceSecurityGroupId: !Ref SecurityGroup
-
   ElasticLoadBalancerV2:
     Type: "AWS::ElasticLoadBalancingV2::LoadBalancer"
     Properties:
@@ -49,6 +59,7 @@ Resources:
         - ","
         - { "Fn::ImportValue": !Sub "${ClusterStackName}-PublicSubnets" }
   HttpsListener:
+    DependsOn: TargetGroup
     Type: "AWS::ElasticLoadBalancingV2::Listener"
     Properties:
       Certificates:
@@ -60,6 +71,7 @@ Resources:
         - TargetGroupArn: !Ref TargetGroup
           Type: forward
   TargetGroup:
+    DependsOn: ElasticLoadBalancerV2
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
     Properties:
       HealthCheckIntervalSeconds: 30
@@ -69,12 +81,22 @@ Resources:
       HealthyThresholdCount: 2
       TargetType: ip
       Name: !Ref "ServiceName"
-      Port: 80
+      Port: !Ref ContainerPort
       Protocol: HTTP
       UnhealthyThresholdCount: 2
       VpcId:
         Fn::ImportValue: !Sub "${ClusterStackName}-VPC"
-
+  ApiRecordSet:
+    DependsOn: ElasticLoadBalancerV2
+    Type: "AWS::Route53::RecordSet"
+    Properties:
+      AliasTarget:
+        DNSName: { "Fn::GetAtt": [ElasticLoadBalancerV2, DNSName] }
+        HostedZoneId:
+          { "Fn::GetAtt": [ElasticLoadBalancerV2, CanonicalHostedZoneID] }
+      HostedZoneName: !Ref HostedZoneName
+      Name: !Ref FQDN
+      Type: A
   ECSTaskExecutionRole:
     Type: AWS::IAM::Role
     Properties:
@@ -106,19 +128,19 @@ Resources:
     Type: AWS::ECS::TaskDefinition
     Properties:
       Family: !Ref "ServiceName"
-      Cpu: 256
-      Memory: 512
+      Cpu: !Ref ContainerCpu
+      Memory: !Ref ContainerMemory
       NetworkMode: awsvpc
       RequiresCompatibilities:
         - FARGATE
       ExecutionRoleArn: !Ref ECSTaskExecutionRole
       ContainerDefinitions:
         - Name: !Ref "ServiceName"
-          Cpu: 256
-          Memory: 512
-          Image: 033374200449.dkr.ecr.eu-west-1.amazonaws.com/ops-portal
+          Cpu: !Ref ContainerCpu
+          Memory: !Ref ContainerMemory
+          Image: !Ref ContainerImage
           PortMappings:
-            - ContainerPort: 80
+            - ContainerPort: !Ref ContainerPort
           LogConfiguration:
             LogDriver: awslogs
             Options:
@@ -126,7 +148,17 @@ Resources:
                 Fn::ImportValue: !Sub "${ClusterStackName}-LogGroup"
               awslogs-region: !Ref AWS::Region
               awslogs-stream-prefix: ui
-
+  ServiceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId:
+        Fn::ImportValue: !Sub "${ClusterStackName}-VPC"
+      GroupDescription: Access to the load balancer
+      SecurityGroupIngress:
+        - FromPort: !Ref ContainerPort
+          ToPort: !Ref ContainerPort
+          IpProtocol: tcp
+          SourceSecurityGroupId: !Ref SecurityGroup
   Service:
     Type: AWS::ECS::Service
     Properties:
@@ -148,5 +180,5 @@ Resources:
       TaskDefinition: !Ref "TaskDefinition"
       LoadBalancers:
         - ContainerName: !Ref "ServiceName"
-          ContainerPort: 80
+          ContainerPort: !Ref ContainerPort
           TargetGroupArn: !Ref "TargetGroup"
